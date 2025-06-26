@@ -69,7 +69,7 @@ initialRegistrationScene.action(/SELECT_CITY_(.+)/, async (ctx) => {
   try {
     await updateUser(userId, { gender, province, city });
     await ctx.editMessageText(MESSAGES.REGISTRATION_SUCCESS_PROFILE(gender, province, city));
-    await ctx.reply(MESSAGES.REGISTRATION_SUCCESS_GUIDE_MAIN_MENU);
+    await ctx.reply(MESSAGES.REGISTRATION_SUCCESS_GUIDE_MAIN_MENU.split('\n')[0] + '\n\n' + 'لطفا برای ورود به منوی اصلی، دستور /start را دوباره ارسال کنید.');
     // Explicitly call showMainMenu after successful registration
     // To do this, showMainMenu needs to be accessible here or ctx needs to be passed back to index.js to call it
     // For simplicity, we'll emit an event or rely on the next interaction, but for better UX, direct call is better.

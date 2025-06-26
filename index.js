@@ -106,6 +106,12 @@ const mainFlowMiddleware = async (ctx, next) => {
 };
 bot.use(mainFlowMiddleware);
 
+// Temporary raw text message logger for debugging mentions
+bot.on('text', async (ctx, next) => {
+    console.log(`[RAW TEXT LOGGER] User: ${ctx.from.id}, Chat: ${ctx.chat.id} (${ctx.chat.type}), Title: "${ctx.chat.title || 'N/A'}", Text: "${ctx.message.text}", isAdmin: ${ctx.isAdmin}`);
+    return next(); // Continue to other handlers
+});
+
 
 // --- Helper function to display Main Menu ---
 const showMainMenu = async (ctx, message) => {
