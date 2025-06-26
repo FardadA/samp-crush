@@ -1,4 +1,0 @@
-# requirements.txt
-python-telegram-bot[ext]
-firebase-admin
-python-dotenv
