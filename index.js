@@ -172,13 +172,15 @@ bot.command('start', async (ctx) => {
             return ctx.scene.enter('initialRegistrationScene');
         }
 
+        console.log("[/start] Checking session flags. ctx.session:", JSON.stringify(ctx.session)); // DEBUG LOG
         if (ctx.session.justRegistered) {
+            console.log("[/start] justRegistered flag is true. Showing main menu."); // DEBUG LOG
             delete ctx.session.justRegistered;
-            // Use the second part of REGISTRATION_SUCCESS_GUIDE_MAIN_MENU or a generic welcome to main menu
             const menuMessage = MESSAGES.REGISTRATION_SUCCESS_GUIDE_MAIN_MENU.split('\n')[1] || MESSAGES.WELCOME_BACK;
             return showMainMenu(ctx, menuMessage);
         }
 
+        console.log("[/start] justRegistered flag is false or not set. Showing default main menu."); // DEBUG LOG
         // Default welcome for existing users or if not just registered through the scene
         return showMainMenu(ctx);
 
@@ -326,121 +328,79 @@ bot.action('admin_manage_schools', (ctx) => {
 });
 
 // --- Promote Channel by Mentioning Bot in a Channel ---
-const ADD_CHANNEL_KEYWORD = 'addchannel'; // Or any other keyword you prefer
+const ADD_CHANNEL_KEYWORD = 'addchannel';
 
-bot.on('text', async (ctx) => {
-    // Ensure message is not from a scene or a private chat for this specific handler
-    if (ctx.scene?.current || ctx.chat?.type === 'private') {
-        // Standard fallback for private messages if not handled by other specific handlers
-        if (ctx.chat?.type === 'private' && !ctx.message?.text?.startsWith('/') && !ctx.scene?.current) {
-            console.log(`(Fallback PM) Received: ${ctx.message.text} from ${ctx.from.id}`);
+bot.on('text', async (ctx, next) => { // Added next
+    // If the bot is in a scene, let the scene handle the message.
+    if (ctx.scene?.current) {
+        return next(); // Pass to scene middleware
+    }
+
+    // This handler is specifically for group/channel messages where the bot is mentioned for adding a channel.
+    // It should not interfere with private messages or commands.
+    if (ctx.chat?.type === 'private') {
+        // If it's a private message, and not a command, it might be a general message.
+        if (ctx.message && ctx.message.text && !ctx.message.text.startsWith('/')) {
+            console.log(`(PM Text Fallback) User ${ctx.from.id}: ${ctx.message.text}`);
             return showMainMenu(ctx, MESSAGES.CHOOSE_OPTION);
         }
-        // If in a scene or not a private message, let other handlers or scene logic take over
-        return;
+        return next(); // Let command handlers process it if it's a command
     }
 
-    const messageText = ctx.message.text;
-    const botUsername = ctx.me; // Gets the bot's username (e.g., YourBotUsername)
+    // Proceed only if it's a group or channel message.
+    if (ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup' || ctx.chat?.type === 'channel') {
+        const messageText = ctx.message?.text; // Use optional chaining
+        if (!messageText) return next(); // Not a text message
 
-    // Check if the message mentions the bot and contains the keyword
-    if (messageText.includes(`@${botUsername}`) && messageText.toLowerCase().includes(ADD_CHANNEL_KEYWORD.toLowerCase())) {
-        if (!ctx.isAdmin) {
-            console.log(`User ${ctx.from.id} (not admin) tried to use promote channel mention in chat ${ctx.chat.id}`);
-            // Optionally, send a private message to the user: await ctx.telegram.sendMessage(ctx.from.id, "شما اجازه این کار را ندارید.");
-            return;
-        }
+        const botUsername = ctx.me;
+        console.log(`[Mention Handler] Bot username: @${botUsername}, Received text: "${messageText}" in chat ${ctx.chat.id} ("${ctx.chat.title || 'N/A'}")`);
 
-        // Check if the message is from a channel or supergroup
-        if (ctx.chat.type !== 'channel' && ctx.chat.type !== 'supergroup') {
-            try {
-                await ctx.telegram.sendMessage(ctx.from.id, 'برای افزودن کانال، این دستور را باید در خود کانال یا سوپرگروه مورد نظر با منشن کردن ربات ارسال کنید.');
-            } catch (e) { console.warn("Error sending message to admin about promote command location:", e); }
-            return;
-        }
-
-        const channelId = ctx.chat.id;
-        const channelTitle = ctx.chat.title || `کانال/گروه ${channelId}`; // Title might not be available for all channel types immediately
-        let channelLink = '';
-
-        try {
-            // Attempt to get an invite link if the bot has permissions
-            channelLink = await ctx.telegram.exportChatInviteLink(channelId);
-        } catch (e) {
-            console.warn(`Could not create invite link for channel ${channelId} (${channelTitle}): ${e.message}`);
-            if (ctx.chat.username) { // For public channels/supergroups
-                channelLink = `https://t.me/${ctx.chat.username}`;
-            } else {
-                // If no username and no invite link, it's harder.
-                try {
-                    await ctx.telegram.sendMessage(ctx.from.id, MESSAGES.ADMIN_PROMOTE_CHANNEL_NO_LINK(channelTitle, channelId));
-                } catch (eMsg) { console.warn("Error sending 'no link' message to admin:", eMsg); }
+        if (messageText.includes(`@${botUsername}`) && messageText.toLowerCase().includes(ADD_CHANNEL_KEYWORD.toLowerCase())) {
+            console.log(`[Mention Handler] Bot mentioned with keyword by user ${ctx.from.id}`);
+            if (!ctx.isAdmin) {
+                console.log(`[Mention Handler] User ${ctx.from.id} is not admin. Ignoring.`);
+                return;
             }
-        }
+            console.log(`[Mention Handler] Admin ${ctx.from.id} triggered channel promotion for chat: ${ctx.chat.id}`);
 
-        try {
-            await ctx.telegram.sendMessage(ctx.from.id, MESSAGES.ADMIN_PROMOTE_CHANNEL_INFO(channelTitle, channelId));
-            // Pass channel info to the scene using session or scene state
-            // Note: Scenes are typically initiated by a user in a private chat with the bot.
-            // We need to ensure ctx.scene.enter works correctly when triggered from a group/channel event.
-            // Telegraf's scenes are bound to the user's session, so this should direct the admin (ctx.from.id)
-            // to the scene in their private chat with the bot.
-            // We might need to explicitly use the admin's chat ID for the scene if issues arise,
-            // but Telegraf usually handles this by user session.
-            const adminChatId = ctx.from.id; // The admin who sent the command
-            // To ensure the scene starts in the private chat with the admin:
-            // Use ctx.telegram.sendMessage to the admin to provide a button to start the scene,
-            // or ensure the scene is robust enough to be entered this way.
-            // For now, relying on Telegraf's session mechanism.
-             ctx.scene.enter('getChannelButtonTextScene', { channelId, channelLink, channelTitle }, { chatId: adminChatId }); // This might not work as expected, scenes are user-bound.
-            // A more robust way: Send a message to admin with a button/command to trigger the scene in their PM.
-            // Or, directly call the first step of the scene for the admin.
-            // For Telegraf, ctx.scene.enter should work based on ctx.from.id's session.
-            // We are calling ctx.scene.enter which is associated with the update,
-            // but the scene interaction will happen in private chat with bot if designed correctly.
-            // The scene's first message will be sent to ctx.from.id (admin).
-            bot.telegram.sendMessage(adminChatId, `برای ادامه تنظیمات کانال "${channelTitle}", لطفا مراحل را در این چت دنبال کنید.`); // Inform admin
-            // This ctx is from the group/channel. We need to use a context for the admin's private chat.
-            // This is tricky. The scene should be entered in the admin's private chat.
-            // The simplest is to rely on the scene's first message to be sent to admin's PM.
-            // Let's store state in admin's session for the scene to pick up.
-            // This requires the admin to interact with the bot in PM next.
+            const channelId = ctx.chat.id;
+            const channelTitle = ctx.chat.title || `کانال/گروه ${channelId}`;
+            let channelLink = '';
 
-            // A better approach for triggering scene for admin in PM:
-            // 1. Admin mentions bot in channel.
-            // 2. Bot sends a message to Admin's PM with an inline button.
-            // 3. Admin clicks button in PM, which then enters the scene with the state.
-
-            // Quick fix attempt:
-            // bot.handleUpdate({ message: { from: {id: adminChatId}, chat: {id: adminChatId, type: 'private'}, text: "dummy_to_start_scene_for_admin" }})
-            // This is too complex and hacky.
-
-            // The scene `getChannelButtonTextScene` uses `ctx.reply` or `ctx.editMessageText`.
-            // If this `ctx` is from the group, messages will go to the group.
-            // This needs to be handled carefully. `ctx.scene.enter` uses the session of `ctx.from.id`.
-            // So, subsequent scene interactions will be in the private chat.
-            // The first message of the scene (scene.enter) will be sent to the chat where the update originated
-            // UNLESS the scene itself uses ctx.telegram.sendMessage(ctx.from.id, ...).
-
-            // Let's modify getChannelButtonTextScene.enter to send message to ctx.from.id
-            // (This is already implicitly done by Telegraf if session is user-based)
-             ctx.scene.enter('getChannelButtonTextScene', { channelId, channelLink, channelTitle });
-
-
-        } catch (e) {
-            console.error("Error during promote channel by mention:", e);
             try {
-                await ctx.telegram.sendMessage(ctx.from.id, "خطایی در پردازش درخواست افزودن کانال رخ داد.");
-            } catch (eMsg) { console.warn("Error sending error message to admin:", eMsg); }
-        }
-    } else if (ctx.chat?.type === 'private' && !ctx.message?.text?.startsWith('/') && !ctx.scene?.current) {
-        // This is the fallback for general messages in private chat if not caught by scenes or commands
-        console.log(`(Fallback PM) Received: ${ctx.message.text} from ${ctx.from.id}`);
-        return showMainMenu(ctx, MESSAGES.CHOOSE_OPTION);
-    }
-    // If it's a group/channel message not matching the mention criteria, it's ignored by this handler.
-});
+                channelLink = await ctx.telegram.exportChatInviteLink(channelId);
+            } catch (e) {
+                console.warn(`[Mention Handler] Could not create invite link for channel ${channelId} ("${channelTitle}"): ${e.message}`);
+                if (ctx.chat.username) {
+                    channelLink = `https://t.me/${ctx.chat.username}`;
+                } else {
+                    try {
+                        await ctx.telegram.sendMessage(ctx.from.id, MESSAGES.ADMIN_PROMOTE_CHANNEL_NO_LINK(channelTitle, channelId));
+                    } catch (eMsg) { console.warn("[Mention Handler] Error sending 'no link' message to admin:", eMsg); }
+                }
+            }
 
+            try {
+                // Inform the admin in their private chat that the process has started there.
+                await ctx.telegram.sendMessage(ctx.from.id, MESSAGES.ADMIN_PROMOTE_CHANNEL_INFO(channelTitle, channelId));
+                await ctx.telegram.sendMessage(ctx.from.id, `برای ادامه تنظیمات کانال «${channelTitle}»، لطفا مراحل را در این چت (خصوصی با ربات) دنبال کنید.`);
+
+                // Enter the scene. Telegraf's scene middleware uses ctx.from.id for session key.
+                // The scene's first message (from scene.enter) is modified to use ctx.telegram.sendMessage(ctx.from.id, ...)
+                // so it will be sent to the admin's private chat.
+                return ctx.scene.enter('getChannelButtonTextScene', { channelId, channelLink, channelTitle });
+            } catch (e) {
+                console.error("[Mention Handler] Error during promote channel by mention (entering scene or sending PM):", e);
+                try {
+                    await ctx.telegram.sendMessage(ctx.from.id, "خطایی در پردازش درخواست افزودن کانال رخ داد.");
+                } catch (eMsg) { console.warn("[Mention Handler] Error sending error message to admin:", eMsg); }
+            }
+            return; // Message handled
+        }
+    }
+
+    return next(); // If none of the conditions for this handler are met, pass to the next middleware/handler
+});
 
 // --- Error Handling ---
 bot.catch((err, ctx) => {
