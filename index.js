@@ -431,7 +431,7 @@ bot.on('text', async (ctx, next) => { // Added next
 });
 
 // --- Error Handling ---
-bot.catch((err, ctx) => {
+bot.catch(async (err, ctx) => { // Made this function async
     console.error(`Unhandled error for ${ctx.updateType} by User ${ctx.from?.id} in Chat ${ctx.chat?.id}:`, err);
     // Check if the error is due to the bot being blocked or kicked
     if (err.response && err.response.error_code === 403) {
