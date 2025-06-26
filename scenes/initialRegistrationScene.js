@@ -70,13 +70,24 @@ initialRegistrationScene.action(/SELECT_CITY_(.+)/, async (ctx) => {
     await updateUser(userId, { gender, province, city });
     await ctx.editMessageText(MESSAGES.REGISTRATION_SUCCESS_PROFILE(gender, province, city));
     await ctx.reply(MESSAGES.REGISTRATION_SUCCESS_GUIDE_MAIN_MENU);
-    // Main menu will be shown by the middleware or /start command after scene leaves
+    // Explicitly call showMainMenu after successful registration
+    // To do this, showMainMenu needs to be accessible here or ctx needs to be passed back to index.js to call it
+    // For simplicity, we'll emit an event or rely on the next interaction, but for better UX, direct call is better.
+    // Let's assume showMainMenu is imported or passed via ctx.
+    // This requires showMainMenu to be exported from index.js and imported here, or a more complex setup.
+    // A simpler immediate fix is to have the calling middleware in index.js handle this.
+    // For now, we will rely on the /start command's logic or the middleware to show the menu.
+    // The user might type /menu or any other command which will then trigger the main menu.
+    // OR, we can pass a flag in session that /start command or middleware can check.
+    ctx.session.justRegistered = true;
   } catch (error) {
     console.error("Error saving initial registration data to Firestore:", error);
     await ctx.reply(MESSAGES.ERROR_GENERAL);
   } finally {
     delete ctx.session.registrationData;
-    return ctx.scene.leave();
+    // Instead of just leaving, we try to trigger main menu if possible, or /start handles it.
+    await ctx.scene.leave();
+    // The /start or middleware should now pick up and show main menu.
   }
 });
 

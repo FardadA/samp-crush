@@ -9,13 +9,16 @@ getChannelButtonTextScene.enter(async (ctx) => {
     const { channelId, channelLink, channelTitle } = ctx.scene.state;
 
     if (!channelId) { // channelLink can be empty if bot couldn't fetch it
-        await ctx.reply(MESSAGES.ADMIN_CHANNEL_ERROR_INFO_MISSING);
+        // Send message to admin's private chat
+        await ctx.telegram.sendMessage(ctx.from.id, MESSAGES.ADMIN_CHANNEL_ERROR_INFO_MISSING);
         return ctx.scene.leave();
     }
-    await ctx.reply(MESSAGES.ADMIN_CHANNEL_BUTTON_TEXT_PROMPT(channelTitle, channelId, channelLink || 'موجود نیست'));
+    // Send message to admin's private chat
+    await ctx.telegram.sendMessage(ctx.from.id, MESSAGES.ADMIN_CHANNEL_BUTTON_TEXT_PROMPT(channelTitle, channelId, channelLink || 'موجود نیست'));
 });
 
 getChannelButtonTextScene.on('text', async (ctx) => {
+    // This handler will be triggered when the admin replies in the private chat
     const buttonText = ctx.message.text.trim();
     if (buttonText.length < 1 || buttonText.length > 30) {
         await ctx.reply(MESSAGES.ADMIN_CHANNEL_BUTTON_TEXT_INVALID);
