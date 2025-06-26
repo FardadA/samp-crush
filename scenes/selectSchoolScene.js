@@ -8,7 +8,7 @@ const selectSchoolScene = new Scenes.BaseScene(sceneId);
 selectSchoolScene.enter(async (ctx) => {
     const userId = ctx.from.id;
     const userDoc = await getUser(userId);
-    if (!userDoc || !userDoc.exists()) {
+    if (!userDoc || !userDoc.exists) { // Changed from userDoc.exists()
         await ctx.reply(MESSAGES.PROFILE_USER_INFO_NOT_FOUND);
         return ctx.scene.leave();
     }
@@ -54,7 +54,7 @@ selectSchoolScene.action(/SELECT_SCHOOL_(.+)/, async (ctx) => {
         await ctx.editMessageText(MESSAGES.PROFILE_SCHOOL_SUCCESS(schoolName));
 
         const userDoc = await getUser(userId);
-        if (userDoc && userDoc.exists()) {
+        if (userDoc && userDoc.exists) { // Changed from userDoc.exists()
             const userData = userDoc.data();
             if (userData.name && userData.age && userData.school && userData.phoneNumber && !userData.profileCompletionAwarded) {
                 const currentCoins = userData.coins || 0;
