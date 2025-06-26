@@ -24,7 +24,7 @@ enterAgeScene.on('text', async (ctx) => {
         await ctx.reply(MESSAGES.PROFILE_AGE_SUCCESS(age));
 
         const userDoc = await getUser(userId);
-        if (userDoc && userDoc.exists()) {
+        if (userDoc && userDoc.exists) { // Changed from userDoc.exists()
             const userData = userDoc.data();
             if (userData.name && userData.age && userData.school && userData.phoneNumber && !userData.profileCompletionAwarded) {
                 const currentCoins = userData.coins || 0;

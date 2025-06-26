@@ -38,6 +38,15 @@ const stage = new Scenes.Stage([
 bot.use(session());
 bot.use(stage.middleware());
 
+// Temporary raw text message logger for debugging mentions - MOVED EARLIER
+bot.on('text', async (ctx, next) => {
+    // Only log if not handled by a scene already
+    if (!ctx.scene?.current) {
+        console.log(`[RAW TEXT LOGGER] User: ${ctx.from?.id}, Chat: ${ctx.chat?.id} (${ctx.chat?.type}), Title: "${ctx.chat?.title || 'N/A'}", Text: "${ctx.message?.text}", isAdmin: ${ctx.isAdmin || false}`);
+    }
+    return next(); // Continue to other handlers
+});
+
 // --- Admin Check Middleware ---
 bot.use(async (ctx, next) => {
   if (!db) {
@@ -46,7 +55,7 @@ bot.use(async (ctx, next) => {
   }
   if (ctx.from && ctx.from.id) {
     const adminConfigDoc = await getAdminConfig();
-    ctx.isAdmin = adminConfigDoc && adminConfigDoc.exists && adminConfigDoc.data().adminId === ctx.from.id;
+    ctx.isAdmin = adminConfigDoc && adminConfigDoc.exists && adminConfigDoc.data()?.adminId === ctx.from.id; // Added optional chaining for data()
   } else {
     ctx.isAdmin = false;
   }
@@ -86,31 +95,37 @@ const mainFlowMiddleware = async (ctx, next) => {
         if (unjoinedChannels.length > 0) {
             const buttons = unjoinedChannels.map(ch => Markup.button.url(ch.text || `کانال ${ch.channelId}`, ch.link || `https://t.me/c/${String(ch.channelId).replace("-100", "")}/${ch.message_id || ''}`));
             buttons.push(Markup.button.callback('✅ عضو شدم', 'refresh_join_status'));
-            await ctx.reply(MESSAGES.FORCED_JOIN_PROMPT, Markup.inlineKeyboard(buttons, { columns: 1 }));
+            try {
+                await ctx.reply(MESSAGES.FORCED_JOIN_PROMPT, Markup.inlineKeyboard(buttons, { columns: 1 }));
+            } catch (e) {
+                console.error(`Error sending forced join prompt to user ${userId}:`, e);
+            }
             return;
         }
     }
 
     const userDoc = await getUser(userId);
-    if (userDoc && userDoc.exists) {
+    if (userDoc && userDoc.exists) { // Changed
         const userData = userDoc.data();
         if (!userData.gender || !userData.province || !userData.city) {
-            await ctx.reply(MESSAGES.COMPLETE_INITIAL_REGISTRATION);
+            try {
+                await ctx.reply(MESSAGES.COMPLETE_INITIAL_REGISTRATION);
+            } catch (e) {
+                console.error(`Error sending complete initial registration prompt to user ${userId}:`, e);
+            }
             return ctx.scene.enter('initialRegistrationScene');
         }
     } else {
-        await ctx.reply(MESSAGES.PROFILE_USER_INFO_NOT_FOUND.replace(' با /start مجددا شروع کنید', ' لطفا دستور /start را ارسال کنید.')); // Adapted message
+        try {
+            await ctx.reply(MESSAGES.PROFILE_USER_INFO_NOT_FOUND.replace(' با /start مجددا شروع کنید', ' لطفا دستور /start را ارسال کنید.')); // Adapted message
+        } catch (e) {
+            console.error(`Error sending user not found prompt to user ${userId}:`, e);
+        }
         return;
     }
     return next();
 };
 bot.use(mainFlowMiddleware);
-
-// Temporary raw text message logger for debugging mentions
-bot.on('text', async (ctx, next) => {
-    console.log(`[RAW TEXT LOGGER] User: ${ctx.from.id}, Chat: ${ctx.chat.id} (${ctx.chat.type}), Title: "${ctx.chat.title || 'N/A'}", Text: "${ctx.message.text}", isAdmin: ${ctx.isAdmin}`);
-    return next(); // Continue to other handlers
-});
 
 
 // --- Helper function to display Main Menu ---
@@ -123,11 +138,18 @@ const showMainMenu = async (ctx, message) => {
         [Markup.button.callback('👀 نظرات اطراف', 'view_feedback_placeholder')],
         ...(ctx.isAdmin ? [[Markup.button.callback('👑 پنل ادمین', 'admin_panel_action')]] : [])
     ]);
-    if (ctx.callbackQuery) {
-        try { await ctx.editMessageText(text, keyboard); }
-        catch (e) { await ctx.reply(text, keyboard); }
-    } else {
-        await ctx.reply(text, keyboard);
+    try {
+        if (ctx.callbackQuery) {
+            await ctx.editMessageText(text, keyboard);
+        } else {
+            await ctx.reply(text, keyboard);
+        }
+    } catch (error) {
+        console.error(`Error in showMainMenu for user ${ctx.from?.id}:`, error);
+        if (error.response && error.response.error_code === 403) {
+            console.warn(`Bot blocked by user ${ctx.from?.id}. Cannot send main menu.`);
+        }
+        // Do not attempt to reply further if the initial send failed, especially if blocked.
     }
 };
 
@@ -142,7 +164,7 @@ bot.command('start', async (ctx) => {
 
     try {
         const adminConfigDoc = await getAdminConfig();
-        if (!adminConfigDoc || !adminConfigDoc.exists || !adminConfigDoc.data().adminId) {
+        if (!adminConfigDoc || !adminConfigDoc.exists || !adminConfigDoc.data()?.adminId) { // Added optional chaining for data()
             await setAdminId(userId);
             ctx.isAdmin = true;
             console.log(`User ${userId} has been set as the first admin.`);
@@ -150,7 +172,7 @@ bot.command('start', async (ctx) => {
         }
 
         let userDoc = await getUser(userId);
-        if (!userDoc || !userDoc.exists) {
+        if (!userDoc || !userDoc.exists) { // Changed
             const initialCoins = 20;
             await updateUser(userId, {
                 telegramId: userId, firstName: ctx.from.first_name || '', username: ctx.from.username || '',
@@ -207,7 +229,7 @@ bot.action('show_profile', async (ctx) => {
     if (ctx.callbackQuery) await ctx.answerCbQuery();
     const userId = ctx.from.id;
     const userDoc = await getUser(userId);
-    if (!userDoc || !userDoc.exists) return ctx.reply(MESSAGES.PROFILE_USER_INFO_NOT_FOUND);
+    if (!userDoc || !userDoc.exists) return ctx.reply(MESSAGES.PROFILE_USER_INFO_NOT_FOUND); // Changed
     const u = userDoc.data();
     let profileText = MESSAGES.PROFILE_TITLE;
     profileText += `▫️ نام: ${u.name || MESSAGES.PROFILE_FIELD_UNSET}\n`;
@@ -233,7 +255,7 @@ bot.action('show_coins', async (ctx) => {
     if (ctx.callbackQuery) await ctx.answerCbQuery();
     const userId = ctx.from.id;
     const userDoc = await getUser(userId);
-    if (!userDoc || !userDoc.exists) return ctx.reply(MESSAGES.PROFILE_USER_INFO_NOT_FOUND);
+    if (!userDoc || !userDoc.exists) return ctx.reply(MESSAGES.PROFILE_USER_INFO_NOT_FOUND); // Changed
     const coins = userDoc.data().coins || 0;
     const botInfo = await ctx.telegram.getMe();
     const referralLink = `https://t.me/${botInfo.username}?start=${userId}`;
@@ -276,7 +298,7 @@ bot.action('refresh_join_status', async (ctx) => {
         }
     }
     const userDoc = await getUser(userId);
-    if (userDoc && userDoc.exists) {
+    if (userDoc && userDoc.exists) { // Changed
         const userData = userDoc.data();
         if (!userData.gender || !userData.province || !userData.city) {
             await ctx.reply(MESSAGES.FORCED_JOIN_SUCCESS_COMPLETE_INFO);
@@ -410,17 +432,25 @@ bot.on('text', async (ctx, next) => { // Added next
 
 // --- Error Handling ---
 bot.catch((err, ctx) => {
-    console.error(`Error for ${ctx.updateType} by User ${ctx.from?.id} in Chat ${ctx.chat?.id}:`, err);
-    console.error(err.stack);
-    try {
-        const baseMessage = MESSAGES.ERROR_GENERAL;
-        if (ctx.scene && ctx.scene.leave) {
-            ctx.reply(`${baseMessage} ${MESSAGES.WELCOME_BACK.split('.')[0]}.`); // Simplified return message
-            ctx.scene.leave();
-        } else {
-            ctx.reply(baseMessage);
+    console.error(`Unhandled error for ${ctx.updateType} by User ${ctx.from?.id} in Chat ${ctx.chat?.id}:`, err);
+    // Check if the error is due to the bot being blocked or kicked
+    if (err.response && err.response.error_code === 403) {
+        console.warn(`Bot was blocked or kicked from chat ${ctx.chat?.id}. No reply will be sent.`);
+        // Optionally, mark user/chat as inactive in DB here
+    } else {
+        // For other errors, try to reply to the user if possible
+        try {
+            const baseMessage = MESSAGES.ERROR_GENERAL;
+            if (ctx.scene && ctx.scene.leave) {
+                await ctx.reply(`${baseMessage} ${MESSAGES.WELCOME_BACK.split('.')[0]}.`);
+                ctx.scene.leave();
+            } else if (ctx.reply) { // Check if ctx.reply exists before calling
+                await ctx.reply(baseMessage);
+            }
+        } catch (e) {
+            console.error("Error within bot.catch while trying to reply to user:", e);
         }
-    } catch (e) { console.error("Error in error handler itself:", e); }
+    }
 });
 
 // --- Start Bot ---
