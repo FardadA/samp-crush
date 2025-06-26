@@ -1,5 +1,6 @@
-# handlers/profile.py
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
+# handlers/profile.py (نسخه کامل و بازنویسی شده برای Firestore)
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ContextTypes,
     ConversationHandler,
@@ -9,20 +10,18 @@ from telegram.ext import (
     CommandHandler,
 )
 
-from firebase_config import get_user, update_user # در ادامه توابع مدارس را هم اضافه می‌کنیم
+# تمام توابع مورد نیاز از firebase_config در یک خط وارد می شوند
+from firebase_config import get_user, update_user, get_schools
 from .menu import main_menu_handler
 from constants.states import AWAIT_NAME, AWAIT_AGE, SELECT_SCHOOL, AWAIT_PHONE
-
-# فرض می‌کنیم توابع زیر را به firebase_config.py اضافه کرده‌ایم
-from firebase_config import get_schools # get_schools(province, city)
 
 async def check_and_award_completion_bonus(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     """
     بررسی می‌کند آیا پروفایل کامل شده و جایزه 50 سکه‌ای را می‌دهد.
     """
     user_data = get_user(user_id)
-    # چک می‌کنیم تمام فیلدها پر شده باشند و جایزه قبلا داده نشده باشد
-    if all(k in user_data for k in ['name', 'age', 'school', 'phone']) and not user_data.get('profile_bonus_awarded'):
+    # چک می‌کنیم تمام فیلدهای اصلی پر شده باشند و جایزه قبلا داده نشده باشد
+    if user_data and all(k in user_data for k in ['name', 'age', 'school', 'phone']) and not user_data.get('profile_bonus_awarded'):
         new_coins = user_data.get('coins', 0) + 50
         update_data = {
             'coins': new_coins,
@@ -39,6 +38,10 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     نمایش پروفایل کاربر و دکمه‌هایی برای تکمیل اطلاعات ناقص.
     """
+    # اگر از طریق query (دکمه شیشه ای) آمده باشد، آن را answer می‌کنیم تا حالت لودینگ برود
+    if update.callback_query:
+        await update.callback_query.answer()
+
     user_id = update.effective_user.id
     user_data = get_user(user_id)
 
@@ -64,29 +67,32 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔸 استان: {province}\n"
         f"🔸 شهر: {city}\n"
         f"🔸 مدرسه: {school}\n"
-        f"🔸 شماره تماس: {phone}\n"
-        f"💰 سکه‌ها: {coins}"
+        f"🔸 شماره تماس: {phone}\n\n"
+        f"💰 **سکه‌ها: {coins}**"
     )
 
     # ساخت دکمه‌های شیشه‌ای برای اطلاعات ناقص
-    keyboard = []
+    buttons = []
     if name == 'ثبت نشده':
-        keyboard.append([KeyboardButton("📝 ثبت نام", callback_data="complete_name")])
+        buttons.append(InlineKeyboardButton("📝 ثبت نام", callback_data="complete_name"))
     if age == 'ثبت نشده':
-        keyboard.append([KeyboardButton("🎂 ثبت سن", callback_data="complete_age")])
+        buttons.append(InlineKeyboardButton("🎂 ثبت سن", callback_data="complete_age"))
     if school == 'ثبت نشده':
-        keyboard.append([KeyboardButton("🏫 انتخاب مدرسه", callback_data="complete_school")])
+        buttons.append(InlineKeyboardButton("🏫 انتخاب مدرسه", callback_data="complete_school"))
     if phone == 'ثبت نشده':
-        keyboard.append([KeyboardButton("📱 ثبت شماره تماس", callback_data="complete_phone")])
+        buttons.append(InlineKeyboardButton("📱 ثبت شماره", callback_data="complete_phone"))
     
-    keyboard.append([KeyboardButton(" بازگشت به منوی اصلی", callback_data="back_to_main_menu")])
+    # چیدن دکمه‌ها در ردیف‌های دوتایی برای زیبایی بیشتر
+    keyboard_layout = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    keyboard_layout.append([InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="back_to_main_menu")])
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = InlineKeyboardMarkup(keyboard_layout)
     
+    # برای جلوگیری از خطا، همیشه از effective_message استفاده می‌کنیم
     if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+        await update.effective_message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')
     else:
-        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+        await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
 
 async def prompt_for_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -102,34 +108,44 @@ async def prompt_for_info(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     prompts = {
         'name': ("لطفاً نام کامل خود را وارد کنید:", AWAIT_NAME),
         'age': ("لطفاً سن خود را به عدد وارد کنید:", AWAIT_AGE),
-        'phone': ("برای ثبت شماره، لطفاً از دکمه زیر استفاده کنید تا شماره شما به اشتراک گذاشته شود. (این شماره محرمانه باقی می‌ماند)", AWAIT_PHONE),
+        'phone': ("برای تایید هویت و ثبت شماره، لطفاً از دکمه زیر استفاده کنید. (این شماره محرمانه باقی می‌ماند)", AWAIT_PHONE),
         'school': ("در حال دریافت لیست مدارس شهر شما...", SELECT_SCHOOL)
     }
     
     prompt_text, state = prompts[info_type]
     
+    # ویرایش پیام قبلی به جای ارسال پیام جدید
+    await query.edit_message_text(text=prompt_text)
+
     if info_type == 'phone':
-        keyboard = ReplyKeyboardMarkup([[KeyboardButton("ارسال شماره تماس 📞", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True)
-        await query.message.reply_text(prompt_text, reply_markup=keyboard)
+        # اضافه کردن دکمه انصراف به کیبورد شماره تماس
+        keyboard = ReplyKeyboardMarkup(
+            [[KeyboardButton("ارسال شماره تماس 📞", request_contact=True)], [KeyboardButton("انصراف")]],
+            resize_keyboard=True, one_time_keyboard=True
+        )
+        await query.message.reply_text("لطفاً از کیبورد زیر استفاده کنید:", reply_markup=keyboard)
+
     elif info_type == 'school':
-        # منطق نمایش مدارس
+        # --- بخش اصلاح شده برای Firestore ---
         user_data = get_user(update.effective_user.id)
         province = user_data.get('province')
         city = user_data.get('city')
         if not province or not city:
-            await query.edit_message_text("ابتدا باید استان و شهر خود را در ثبت‌نام اولیه مشخص کنید!")
+            await query.message.reply_text("ابتدا باید استان و شهر خود را در ثبت‌نام اولیه مشخص کنید!")
+            await show_profile(update, context) # نمایش مجدد پروفایل
             return ConversationHandler.END
         
-        schools = get_schools(province, city)
-        if not schools:
-            await query.edit_message_text("متاسفانه هنوز مدرسه‌ای برای شهر شما تعریف نشده است. این مورد را به ادمین اطلاع دهید.")
+        # get_schools حالا یک لیست از نام‌ها برمی‌گرداند
+        schools_list = get_schools(province, city)
+        if not schools_list:
+            await query.message.reply_text("متاسفانه هنوز مدرسه‌ای برای شهر شما تعریف نشده است. این مورد را به ادمین اطلاع دهید.")
+            await show_profile(update, context) # نمایش مجدد پروفایل
             return ConversationHandler.END
 
-        school_keyboard = [[InlineKeyboardButton(name, callback_data=f"school_{name}")] for name in schools.keys()]
-        await query.edit_message_text("لطفاً مدرسه خود را از لیست زیر انتخاب کنید:", reply_markup=InlineKeyboardMarkup(school_keyboard))
-    else:
-        await query.edit_message_text(prompt_text)
-
+        # ساخت کیبورد از روی لیست نام مدارس
+        school_keyboard = [[InlineKeyboardButton(name, callback_data=f"school_{name}")] for name in schools_list]
+        await query.message.reply_text("لطفاً مدرسه خود را از لیست زیر انتخاب کنید:", reply_markup=InlineKeyboardMarkup(school_keyboard))
+    
     return state
 
 
@@ -143,12 +159,13 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     await show_profile(update, context) # نمایش مجدد پروفایل آپدیت شده
     return ConversationHandler.END
 
+
 async def receive_age(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """ذخیره سن کاربر با اعتبارسنجی."""
     user_id = update.effective_user.id
     age = update.message.text
     if not age.isdigit() or not 10 < int(age) < 25:
-        await update.message.reply_text("❌ لطفاً سن خود را به صورت یک عدد معتبر (بین ۱۱ تا ۲۴) وارد کنید.")
+        await update.message.reply_text("❌ لطفاً سن خود را به صورت یک عدد معتبر (بین ۱۱ تا ۲۴) وارد کنید. دوباره تلاش کنید:")
         return AWAIT_AGE # در همین وضعیت باقی می‌ماند تا ورودی صحیح دریافت شود
     
     update_user(user_id, {'age': int(age)})
@@ -157,11 +174,13 @@ async def receive_age(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     await show_profile(update, context)
     return ConversationHandler.END
 
+
 async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """ذخیره شماره تماس کاربر پس از تایید."""
     contact = update.message.contact
     user_id = update.effective_user.id
 
+    # این شرط ضروری است تا کاربر نتواند شماره فرد دیگری را ارسال کند
     if contact.user_id != user_id:
         await update.message.reply_text("❌ لطفاً فقط شماره تماس خودتان را به اشتراک بگذارید!", reply_markup=ReplyKeyboardRemove())
         await show_profile(update, context)
@@ -173,6 +192,7 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await show_profile(update, context)
     return ConversationHandler.END
 
+
 async def select_school(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """ذخیره مدرسه انتخاب شده."""
     query = update.callback_query
@@ -181,16 +201,25 @@ async def select_school(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     school_name = query.data.split('_', 1)[1]
     
     update_user(user_id, {'school': school_name})
+    
+    # به جای ساختن آپدیت فیک، مستقیما تابع نمایش پروفایل را با آپدیت اصلی فراخوانی می‌کنیم
+    # و پیام قبلی را ویرایش می‌کنیم تا کاربر متوجه ثبت موفقیت آمیز شود
     await query.edit_message_text(f"✅ مدرسه شما با موفقیت '{school_name}' ثبت شد.")
+    
     await check_and_award_completion_bonus(user_id, context)
-    # برای نمایش مجدد پروفایل، باید یک آپدیت جدید بسازیم چون query دیگر پیام ندارد
-    fake_update = Update(update.update_id, message=query.message)
-    await show_profile(fake_update, context)
+    # نمایش مجدد پروفایل آپدیت شده
+    await show_profile(update, context)
     return ConversationHandler.END
 
 async def cancel_profile_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """لغو فرآیند آپدیت پروفایل."""
-    await update.message.reply_text("عملیات لغو شد.", reply_markup=ReplyKeyboardRemove())
+    """لغو فرآیند آپدیت پروفایل با دستور یا دکمه انصراف."""
+    # اگر از طریق دکمه انصراف آمده باشد، پیام متنی است
+    if update.message:
+        await update.message.reply_text("عملیات لغو شد.", reply_markup=ReplyKeyboardRemove())
+    # اگر با دستور /cancel آمده باشد
+    else:
+        await update.effective_message.reply_text("عملیات لغو شد.", reply_markup=ReplyKeyboardRemove())
+
     await show_profile(update, context)
     return ConversationHandler.END
 
@@ -200,12 +229,12 @@ profile_conversation_handler = ConversationHandler(
     states={
         AWAIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
         AWAIT_AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_age)],
-        AWAIT_PHONE: [MessageHandler(filters.CONTACT, receive_phone)],
+        # اضافه کردن فیلتر برای دکمه انصراف
+        AWAIT_PHONE: [MessageHandler(filters.CONTACT, receive_phone), MessageHandler(filters.Regex('^انصراف$'), cancel_profile_update)],
         SELECT_SCHOOL: [CallbackQueryHandler(select_school, pattern="^school_")],
     },
     fallbacks=[CommandHandler('cancel', cancel_profile_update)],
     map_to_parent={
-         # بعد از اتمام، کنترل به هندلرهای اصلی برمی‌گردد
         ConversationHandler.END: ConversationHandler.END
     }
 )
