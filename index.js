@@ -376,17 +376,29 @@ bot.action('admin_manage_channels', async (ctx) => {
             "لطفاً ربات را به کانال/گروه مورد نظر خود اضافه کرده و به آن دسترسی ادمینی بدهید.\n" +
             "سپس به این بخش بازگردید تا بتوانید آن را به عنوان کانال تبلیغی انتخاب کنید.",
             Markup.inlineKeyboard([
-                Markup.button.callback('🔄 تلاش مجدد برای بارگذاری لیست', 'admin_manage_channels'),
-                Markup.button.callback('بازگشت به پنل ادمین', 'admin_panel_action')
+                [Markup.button.callback('🔄 تلاش مجدد', 'admin_manage_channels')], // Each button in its own row for consistency
+                [Markup.button.callback('بازگشت به پنل', 'admin_panel_action')]
             ])
         );
         return;
     }
 
-    const buttons = adminChats.map(chat => {
+    // Construct keyboard rows for channels where bot is admin
+    const channelButtonsRows = adminChats.map(chat => {
         const title = chat.title.length > 30 ? chat.title.substring(0, 27) + '...' : chat.title;
-        return Markup.button.callback(`${title} (${chat.type})`, `SELECT_PROMO_CHAT_${chat.chatId}`);
+        return [Markup.button.callback(`${title} (${chat.type})`, `SELECT_PROMO_CHAT_${chat.chatId}`)];
     });
+
+    // Action buttons row
+    const actionButtonsRow = [
+        Markup.button.callback('🔄 تلاش مجدد', 'admin_manage_channels'),
+        Markup.button.callback('بازگشت به پنل', 'admin_panel_action')
+    ];
+
+    const finalKeyboard = Markup.inlineKeyboard([
+        ...channelButtonsRows, // Spread the rows of channel buttons
+        actionButtonsRow      // Add the row of action buttons
+    ]);
 
     // Add already promoted channels for information
     const promotedChannels = await getChannels(); // These are the ones actually used for forced join
@@ -402,7 +414,7 @@ bot.action('admin_manage_channels', async (ctx) => {
 
     try {
         // Attempt to edit the message. If it's not modified, Telegram throws an error.
-        await ctx.editMessageText(message, Markup.inlineKeyboard(buttons, { columns: 1 }).row(Markup.button.callback('بازگشت به پنل ادمین', 'admin_panel_action')));
+        await ctx.editMessageText(message, Markup.inlineKeyboard(keyboardRows));
     } catch (e) {
         if (e.response && e.response.description && e.response.description.includes('message is not modified')) {
             // If message is not modified, just answer the callback query and do nothing else.
