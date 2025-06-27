@@ -414,7 +414,7 @@ bot.action('admin_manage_channels', async (ctx) => {
 
     try {
         // Attempt to edit the message. If it's not modified, Telegram throws an error.
-        await ctx.editMessageText(message, Markup.inlineKeyboard(keyboardRows));
+        await ctx.editMessageText(message, finalKeyboard); // Corrected variable name from keyboardRows to finalKeyboard
     } catch (e) {
         if (e.response && e.response.description && e.response.description.includes('message is not modified')) {
             // If message is not modified, just answer the callback query and do nothing else.
