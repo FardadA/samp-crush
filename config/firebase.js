@@ -202,6 +202,75 @@ module.exports.addSchools = async (province, city, schoolNames) => {
 };
 
 /**
+ * Adds or updates a chat where the bot is an administrator.
+ * @param {number} chatId - The ID of the chat.
+ * @param {string} title - The title of the chat.
+ * @param {string} type - The type of the chat (e.g., 'channel', 'supergroup').
+ * @param {string|null} inviteLink - Optional invite link.
+ * @returns {Promise<void|null>}
+ */
+module.exports.updateBotAdministeredChat = async (chatId, title, type, inviteLink = null) => {
+    if (!db) {
+        console.warn('Firestore is not available. Cannot update bot administered chat.');
+        return null;
+    }
+    try {
+        const chatRef = db.collection('bot_administered_chats').doc(String(chatId));
+        await chatRef.set({
+            chatId: String(chatId),
+            title: title,
+            type: type,
+            inviteLink: inviteLink, // May need to be updated periodically if it expires
+            lastUpdated: FieldValue.serverTimestamp()
+        }, { merge: true });
+        console.log(`Bot administered chat ${chatId} (${title}) updated in Firestore.`);
+    } catch (error) {
+        console.error(`Error updating bot administered chat ${chatId} in Firestore:`, error);
+    }
+};
+
+/**
+ * Removes a chat from the bot_administered_chats collection.
+ * @param {number} chatId - The ID of the chat.
+ * @returns {Promise<void|null>}
+ */
+module.exports.removeBotAdministeredChat = async (chatId) => {
+    if (!db) {
+        console.warn('Firestore is not available. Cannot remove bot administered chat.');
+        return null;
+    }
+    try {
+        const chatRef = db.collection('bot_administered_chats').doc(String(chatId));
+        await chatRef.delete();
+        console.log(`Bot administered chat ${chatId} removed from Firestore.`);
+    } catch (error) {
+        console.error(`Error removing bot administered chat ${chatId} from Firestore:`, error);
+    }
+};
+
+/**
+ * Gets all chats where the bot is an administrator.
+ * @returns {Promise<Array<object>|null>} An array of chat objects or null.
+ */
+module.exports.getBotAdministeredChats = async () => {
+    if (!db) {
+        console.warn('Firestore is not available. Cannot get bot administered chats.');
+        return null;
+    }
+    try {
+        const chatsSnapshot = await db.collection('bot_administered_chats').orderBy('title').get();
+        if (chatsSnapshot.empty) {
+            return [];
+        }
+        return chatsSnapshot.docs.map(doc => doc.data());
+    } catch (error) {
+        console.error('Error getting bot administered chats from Firestore:', error);
+        return null;
+    }
+};
+
+
+/**
  * Gets schools for a specific city and province from Firestore.
  * @param {string} province - The name of the province.
  * @param {string} city - The name of the city.
