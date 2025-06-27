@@ -1,14 +1,22 @@
 const { Telegraf, session, Scenes, Markup } = require('telegraf');
 const dotenv = require('dotenv');
-const { db, FieldValue, getAdminConfig, setAdminId, updateUser, getUser, getChannels, getSchools, addChannel } = require('./config/firebase');
+// Consolidated import for firebase
+const {
+    db, FieldValue,
+    getAdminConfig, setAdminId,
+    updateUser, getUser,
+    getChannels, addChannel,
+    getSchools, addSchools, // Assuming addSchools was intended to be used or is used elsewhere
+    updateBotAdministeredChat, removeBotAdministeredChat, getBotAdministeredChats
+} = require('./config/firebase');
 const MESSAGES = require('./constants/messages');
 
 // Load environment variables
 dotenv.config();
 
-// Firebase and Message Constants
-const { db, FieldValue, getAdminConfig, setAdminId, updateUser, getUser, getChannels, getSchools, addChannel, updateBotAdministeredChat, removeBotAdministeredChat, getBotAdministeredChats } = require('./config/firebase');
-const MESSAGES = require('./constants/messages');
+// Firebase and Message Constants are already loaded above, removing duplicate declaration
+// const { db, FieldValue, getAdminConfig, setAdminId, updateUser, getUser, getChannels, getSchools, addChannel, updateBotAdministeredChat, removeBotAdministeredChat, getBotAdministeredChats } = require('./config/firebase');
+// const MESSAGES = require('./constants/messages');
 
 
 const botToken = process.env.TELEGRAM_BOT_TOKEN;
