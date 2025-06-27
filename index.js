@@ -151,18 +151,29 @@ const showMainMenu = async (ctx, message) => {
         [Markup.button.callback('👀 نظرات اطراف', 'view_feedback_placeholder')],
         ...(ctx.isAdmin ? [[Markup.button.callback('👑 پنل ادمین', 'admin_panel_action')]] : [])
     ]);
+
     try {
-        if (ctx.callbackQuery) {
-            await ctx.editMessageText(text, keyboard);
-        } else {
-            await ctx.reply(text, keyboard);
+        // 1. Delete the previous main menu message if its ID is stored in the session
+        if (ctx.session.mainMenuMessageId) {
+            await ctx.deleteMessage(ctx.session.mainMenuMessageId).catch(e => {
+                console.warn(`Could not delete previous main menu message (ID: ${ctx.session.mainMenuMessageId}): ${e.message}`);
+                // If the message was already deleted or not found, it's fine, continue.
+            });
+            ctx.session.mainMenuMessageId = null; // Clear the ID from session
         }
+
+        // 2. Send the new main menu message
+        const sentMessage = await ctx.reply(text, keyboard);
+        // 3. Store the ID of the new main menu message in the session
+        ctx.session.mainMenuMessageId = sentMessage.message_id;
+
     } catch (error) {
         console.error(`Error in showMainMenu for user ${ctx.from?.id}:`, error);
         if (error.response && error.response.error_code === 403) {
             console.warn(`Bot blocked by user ${ctx.from?.id}. Cannot send main menu.`);
         }
-        // Do not attempt to reply further if the initial send failed, especially if blocked.
+        // If any error occurs during sending, clear the ID to prevent issues with deleting a non-existent/failed message next time
+        ctx.session.mainMenuMessageId = null;
     }
 };
 
