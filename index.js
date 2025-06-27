@@ -109,7 +109,8 @@ const mainFlowMiddleware = async (ctx, next) => {
             const buttons = unjoinedChannels.map(ch => Markup.button.url(ch.text || `کانال ${ch.channelId}`, ch.link || `https://t.me/c/${String(ch.channelId).replace("-100", "")}/${ch.message_id || ''}`));
             buttons.push(Markup.button.callback('✅ عضو شدم', 'refresh_join_status'));
             try {
-                await ctx.reply(MESSAGES.FORCED_JOIN_PROMPT, Markup.inlineKeyboard(buttons, { columns: 1 }));
+                // Ensure message is sent to the user, not the chat if it's a channel/group
+                await ctx.telegram.sendMessage(userId, MESSAGES.FORCED_JOIN_PROMPT, Markup.inlineKeyboard(buttons, { columns: 1 }));
             } catch (e) {
                 console.error(`Error sending forced join prompt to user ${userId}:`, e);
             }
@@ -122,7 +123,7 @@ const mainFlowMiddleware = async (ctx, next) => {
         const userData = userDoc.data();
         if (!userData.gender || !userData.province || !userData.city) {
             try {
-                await ctx.reply(MESSAGES.COMPLETE_INITIAL_REGISTRATION);
+                await ctx.telegram.sendMessage(userId, MESSAGES.COMPLETE_INITIAL_REGISTRATION);
             } catch (e) {
                 console.error(`Error sending complete initial registration prompt to user ${userId}:`, e);
             }
@@ -130,7 +131,8 @@ const mainFlowMiddleware = async (ctx, next) => {
         }
     } else {
         try {
-            await ctx.reply(MESSAGES.PROFILE_USER_INFO_NOT_FOUND.replace(' با /start مجددا شروع کنید', ' لطفا دستور /start را ارسال کنید.')); // Adapted message
+            // This message should go to the user who interacted.
+            await ctx.telegram.sendMessage(userId, MESSAGES.PROFILE_USER_INFO_NOT_FOUND.replace(' با /start مجددا شروع کنید', ' لطفا دستور /start را ارسال کنید.'));
         } catch (e) {
             console.error(`Error sending user not found prompt to user ${userId}:`, e);
         }
@@ -399,12 +401,25 @@ bot.action('admin_manage_channels', async (ctx) => {
 
 
     try {
+        // Attempt to edit the message. If it's not modified, Telegram throws an error.
         await ctx.editMessageText(message, Markup.inlineKeyboard(buttons, { columns: 1 }).row(Markup.button.callback('بازگشت به پنل ادمین', 'admin_panel_action')));
     } catch (e) {
-        // If message is too long or other error
-        console.error("Error editing message for admin_manage_channels:", e);
-        await ctx.reply("لیست کانال‌ها برای نمایش بسیار طولانی است یا خطایی رخ داده. لطفا از طریق Firestore مستقیما مدیریت کنید یا با پشتیبانی تماس بگیرید.");
-        await showAdminPanel(ctx); // Show admin panel again
+        if (e.response && e.response.description && e.response.description.includes('message is not modified')) {
+            // If message is not modified, just answer the callback query and do nothing else.
+            await ctx.answerCbQuery('لیست کانال‌ها بدون تغییر است.').catch(err => console.error("Error answering callback query (message not modified):", err));
+        } else {
+            // For other errors (e.g., message too long)
+            console.error("Error editing message for admin_manage_channels:", e);
+            try {
+                await ctx.answerCbQuery('خطا در نمایش لیست کانال‌ها.').catch(err => console.error("Error answering callback query (other error):", err));
+                // Attempt to send as a new message if edit failed for other reasons
+                // await ctx.reply(message, Markup.inlineKeyboard(buttons, { columns: 1 }).row(Markup.button.callback('بازگشت به پنل ادمین', 'admin_panel_action')));
+                // For simplicity, just show admin panel again on other errors
+                await showAdminPanel(ctx);
+            } catch (replyError) {
+                 console.error("Error showing admin panel after another error:", replyError);
+            }
+        }
     }
 });
 

@@ -221,7 +221,7 @@ module.exports.updateBotAdministeredChat = async (chatId, title, type, inviteLin
             title: title,
             type: type,
             inviteLink: inviteLink, // May need to be updated periodically if it expires
-            lastUpdated: FieldValue.serverTimestamp()
+            lastUpdated: admin.firestore.FieldValue.serverTimestamp() // Corrected to use admin.firestore.FieldValue
         }, { merge: true });
         console.log(`Bot administered chat ${chatId} (${title}) updated in Firestore.`);
     } catch (error) {
