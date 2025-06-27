@@ -6,6 +6,11 @@ const MESSAGES = require('./constants/messages');
 // Load environment variables
 dotenv.config();
 
+// Firebase and Message Constants
+const { db, FieldValue, getAdminConfig, setAdminId, updateUser, getUser, getChannels, getSchools, addChannel, updateBotAdministeredChat, removeBotAdministeredChat, getBotAdministeredChats } = require('./config/firebase');
+const MESSAGES = require('./constants/messages');
+
+
 const botToken = process.env.TELEGRAM_BOT_TOKEN;
 if (!botToken) {
   console.error('TELEGRAM_BOT_TOKEN not found in .env file');
@@ -341,13 +346,72 @@ bot.action('admin_panel_action', async (ctx) => {
 bot.action('admin_manage_channels', async (ctx) => {
     if (ctx.callbackQuery) await ctx.answerCbQuery();
     if (!ctx.isAdmin) return ctx.reply(MESSAGES.ACCESS_DENIED_ADMIN);
-    const currentChannels = await getChannels();
-    const channelsText = currentChannels?.map(c => `- ${c.text || c.channelId} (ID: ${c.channelId})`).join('\n');
-    await ctx.editMessageText(
-        MESSAGES.ADMIN_CHANNEL_MGMT_INSTRUCTIONS(channelsText),
-        Markup.inlineKeyboard([Markup.button.callback('بازگشت به پنل ادمین', 'admin_panel_action')])
-    );
+
+    const adminChats = await getBotAdministeredChats();
+    if (!adminChats || adminChats.length === 0) {
+        await ctx.editMessageText(
+            "شما ادمین ربات هستید.\n\n" +
+            "در حال حاضر ربات در هیچ کانال یا گروهی به عنوان ادمین شناسایی نشده است.\n" +
+            "لطفاً ربات را به کانال/گروه مورد نظر خود اضافه کرده و به آن دسترسی ادمینی بدهید.\n" +
+            "سپس به این بخش بازگردید تا بتوانید آن را به عنوان کانال تبلیغی انتخاب کنید.",
+            Markup.inlineKeyboard([
+                Markup.button.callback('🔄 تلاش مجدد برای بارگذاری لیست', 'admin_manage_channels'),
+                Markup.button.callback('بازگشت به پنل ادمین', 'admin_panel_action')
+            ])
+        );
+        return;
+    }
+
+    const buttons = adminChats.map(chat => {
+        const title = chat.title.length > 30 ? chat.title.substring(0, 27) + '...' : chat.title;
+        return Markup.button.callback(`${title} (${chat.type})`, `SELECT_PROMO_CHAT_${chat.chatId}`);
+    });
+
+    // Add already promoted channels for information
+    const promotedChannels = await getChannels(); // These are the ones actually used for forced join
+    let message = "لطفاً کانال یا گروهی را که می‌خواهید به لیست عضویت اجباری اضافه کنید، از لیست زیر انتخاب نمایید.\n\nربات در کانال‌های زیر ادمین است:\n";
+
+    if (promotedChannels && promotedChannels.length > 0) {
+        message += "\n\nکانال‌های عضویت اجباری فعلی:\n";
+        promotedChannels.forEach(pc => {
+            message += `- ${pc.text || pc.channelId} (ID: ${pc.channelId})\n`;
+        });
+    }
+
+
+    try {
+        await ctx.editMessageText(message, Markup.inlineKeyboard(buttons, { columns: 1 }).row(Markup.button.callback('بازگشت به پنل ادمین', 'admin_panel_action')));
+    } catch (e) {
+        // If message is too long or other error
+        console.error("Error editing message for admin_manage_channels:", e);
+        await ctx.reply("لیست کانال‌ها برای نمایش بسیار طولانی است یا خطایی رخ داده. لطفا از طریق Firestore مستقیما مدیریت کنید یا با پشتیبانی تماس بگیرید.");
+        await showAdminPanel(ctx); // Show admin panel again
+    }
 });
+
+// Handler for selecting a chat to promote
+bot.action(/SELECT_PROMO_CHAT_(.+)/, async (ctx) => {
+    if (!ctx.isAdmin) return ctx.answerCbQuery(MESSAGES.ACCESS_DENIED_ADMIN, { show_alert: true });
+
+    const chatId = ctx.match[1];
+    const adminChats = await getBotAdministeredChats();
+    const selectedChat = adminChats.find(c => String(c.chatId) === String(chatId));
+
+    if (!selectedChat) {
+        await ctx.answerCbQuery("کانال انتخاب شده یافت نشد. لیست ممکن است به‌روز نباشد.", { show_alert: true });
+        return ctx.editMessageText("خطا: کانال انتخاب شده یافت نشد. لطفاً دوباره تلاش کنید.", Markup.inlineKeyboard([Markup.button.callback('بازگشت به مدیریت کانال‌ها', 'admin_manage_channels')]));
+    }
+
+    await ctx.answerCbQuery(`کانال «${selectedChat.title}» انتخاب شد.`);
+    // Now enter the scene to get button text, etc.
+    // The scene will then use addChannel to add it to the *actual* forced join list.
+    return ctx.scene.enter('getChannelButtonTextScene', {
+        channelId: selectedChat.chatId,
+        channelLink: selectedChat.inviteLink, // This might be null or outdated
+        channelTitle: selectedChat.title
+    });
+});
+
 
 bot.action('admin_manage_schools', (ctx) => {
     if (ctx.callbackQuery) ctx.answerCbQuery();
@@ -355,80 +419,56 @@ bot.action('admin_manage_schools', (ctx) => {
     ctx.scene.enter('manageSchoolsScene');
 });
 
-// --- Promote Channel by Mentioning Bot in a Channel ---
-const ADD_CHANNEL_KEYWORD = 'addchannel';
+// --- Bot Chat Member Update Handler ---
+bot.on('my_chat_member', async (ctx) => {
+    const chat = ctx.chat;
+    const newMemberStatus = ctx.myChatMember.new_chat_member.status;
+    const oldMemberStatus = ctx.myChatMember.old_chat_member.status;
 
-bot.on('text', async (ctx, next) => { // Added next
-    // If the bot is in a scene, let the scene handle the message.
-    if (ctx.scene?.current) {
-        return next(); // Pass to scene middleware
-    }
+    console.log(`[my_chat_member] Bot status changed in chat ${chat.id} (${chat.title || 'N/A'}), type: ${chat.type}. New status: ${newMemberStatus}, Old status: ${oldMemberStatus}`);
 
-    // This handler is specifically for group/channel messages where the bot is mentioned for adding a channel.
-    // It should not interfere with private messages or commands.
-    if (ctx.chat?.type === 'private') {
-        // If it's a private message, and not a command, it might be a general message.
-        if (ctx.message && ctx.message.text && !ctx.message.text.startsWith('/')) {
-            console.log(`(PM Text Fallback) User ${ctx.from.id}: ${ctx.message.text}`);
-            return showMainMenu(ctx, MESSAGES.CHOOSE_OPTION);
-        }
-        return next(); // Let command handlers process it if it's a command
-    }
-
-    // Proceed only if it's a group or channel message.
-    if (ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup' || ctx.chat?.type === 'channel') {
-        const messageText = ctx.message?.text; // Use optional chaining
-        if (!messageText) return next(); // Not a text message
-
-        const botUsername = ctx.me;
-        console.log(`[Mention Handler] Bot username: @${botUsername}, Received text: "${messageText}" in chat ${ctx.chat.id} ("${ctx.chat.title || 'N/A'}")`);
-
-        if (messageText.includes(`@${botUsername}`) && messageText.toLowerCase().includes(ADD_CHANNEL_KEYWORD.toLowerCase())) {
-            console.log(`[Mention Handler] Bot mentioned with keyword by user ${ctx.from.id}`);
-            if (!ctx.isAdmin) {
-                console.log(`[Mention Handler] User ${ctx.from.id} is not admin. Ignoring.`);
-                return;
-            }
-            console.log(`[Mention Handler] Admin ${ctx.from.id} triggered channel promotion for chat: ${ctx.chat.id}`);
-
-            const channelId = ctx.chat.id;
-            const channelTitle = ctx.chat.title || `کانال/گروه ${channelId}`;
-            let channelLink = '';
-
+    if (chat.type === 'channel' || chat.type === 'supergroup' || chat.type === 'group') {
+        if (newMemberStatus === 'administrator') {
+            console.log(`Bot is now an admin in ${chat.title} (${chat.id})`);
+            let inviteLink = null;
             try {
-                channelLink = await ctx.telegram.exportChatInviteLink(channelId);
+                // Check if bot can create invite link (usually needs to be admin for this)
+                if (ctx.myChatMember.new_chat_member.can_invite_users) {
+                     inviteLink = await ctx.telegram.exportChatInviteLink(chat.id);
+                } else if (chat.username) { // For public channels/supergroups
+                    inviteLink = `https://t.me/${chat.username}`;
+                }
             } catch (e) {
-                console.warn(`[Mention Handler] Could not create invite link for channel ${channelId} ("${channelTitle}"): ${e.message}`);
-                if (ctx.chat.username) {
-                    channelLink = `https://t.me/${ctx.chat.username}`;
-                } else {
+                console.warn(`Could not get invite link for ${chat.id} when becoming admin: ${e.message}`);
+            }
+            await updateBotAdministeredChat(chat.id, chat.title || `Chat ${chat.id}`, chat.type, inviteLink);
+        } else if ( (newMemberStatus === 'left' || newMemberStatus === 'kicked' || oldMemberStatus === 'administrator') && newMemberStatus !== 'administrator' ) {
+            // If bot was admin and now is not, or left/kicked
+            console.log(`Bot is no longer an admin or has left/been kicked from ${chat.title} (${chat.id})`);
+            await removeBotAdministeredChat(chat.id);
+            // Also, if this chat was in the forced-join 'channels' list, admin should be notified or it should be removed.
+            // For now, just removing from bot_administered_chats.
+            const currentForcedChannels = await getChannels();
+            if (currentForcedChannels.some(fc => String(fc.channelId) === String(chat.id))) {
+                console.warn(`Channel ${chat.id} (${chat.title}) was a forced-join channel. Bot lost admin rights or left. Admin should be notified.`);
+                // Optionally, send a message to the bot admin(s)
+                const adminConfig = await getAdminConfig();
+                if (adminConfig && adminConfig.exists && adminConfig.data()?.adminId) {
                     try {
-                        await ctx.telegram.sendMessage(ctx.from.id, MESSAGES.ADMIN_PROMOTE_CHANNEL_NO_LINK(channelTitle, channelId));
-                    } catch (eMsg) { console.warn("[Mention Handler] Error sending 'no link' message to admin:", eMsg); }
+                        await ctx.telegram.sendMessage(adminConfig.data().adminId, `توجه: ربات دیگر در کانال «${chat.title || chat.id}» که یکی از کانال‌های عضویت اجباری بود، ادمین نیست یا از آن خارج شده است. لطفاً این مورد را در پنل ادمین بررسی کنید.`);
+                    } catch (e) { console.error("Error notifying admin about channel status change:", e); }
                 }
             }
-
-            try {
-                // Inform the admin in their private chat that the process has started there.
-                await ctx.telegram.sendMessage(ctx.from.id, MESSAGES.ADMIN_PROMOTE_CHANNEL_INFO(channelTitle, channelId));
-                await ctx.telegram.sendMessage(ctx.from.id, `برای ادامه تنظیمات کانال «${channelTitle}»، لطفا مراحل را در این چت (خصوصی با ربات) دنبال کنید.`);
-
-                // Enter the scene. Telegraf's scene middleware uses ctx.from.id for session key.
-                // The scene's first message (from scene.enter) is modified to use ctx.telegram.sendMessage(ctx.from.id, ...)
-                // so it will be sent to the admin's private chat.
-                return ctx.scene.enter('getChannelButtonTextScene', { channelId, channelLink, channelTitle });
-            } catch (e) {
-                console.error("[Mention Handler] Error during promote channel by mention (entering scene or sending PM):", e);
-                try {
-                    await ctx.telegram.sendMessage(ctx.from.id, "خطایی در پردازش درخواست افزودن کانال رخ داد.");
-                } catch (eMsg) { console.warn("[Mention Handler] Error sending error message to admin:", eMsg); }
-            }
-            return; // Message handled
         }
     }
-
-    return next(); // If none of the conditions for this handler are met, pass to the next middleware/handler
 });
+
+
+// --- Promote Channel by Mentioning Bot in a Channel (DEACTIVATED - Replaced by new admin panel logic) ---
+// const ADD_CHANNEL_KEYWORD = 'addchannel';
+// bot.on('text', async (ctx, next) => {
+//     // ... (previous code for mention handler) ...
+// });
 
 // --- Error Handling ---
 bot.catch(async (err, ctx) => { // Made this function async
