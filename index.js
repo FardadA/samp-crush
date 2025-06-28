@@ -198,29 +198,43 @@ bot.command('start', async (ctx) => {
         }
 
         let userDoc = await getUser(userId);
+        let isNewUser = false; // Flag to track if user is new for referral logic
+
         if (!userDoc || !userDoc.exists) { // Changed
+            isNewUser = true;
             const initialCoins = 20;
             await updateUser(userId, {
                 telegramId: userId, firstName: ctx.from.first_name || '', username: ctx.from.username || '',
                 coins: initialCoins, createdAt: FieldValue.serverTimestamp(), profileCompletionAwarded: false,
             }, false);
-            await ctx.reply(MESSAGES.WELCOME_NEW_USER(initialCoins));
+            try { await ctx.reply(MESSAGES.WELCOME_NEW_USER(initialCoins)); } catch(e) { console.error("Error replying welcome to new user:", e); }
             userDoc = await getUser(userId);
-
-            if (inviterId && !isNaN(inviterId) && inviterId !== userId) {
-                const inviterUserDoc = await getUser(inviterId);
-                if (inviterUserDoc && inviterUserDoc.exists) {
-                    const inviterCoins = inviterUserDoc.data().coins || 0;
-                    const awardCoins = 10;
-                    await updateUser(inviterId, { coins: inviterCoins + awardCoins });
-                    console.log(`User ${inviterId} received ${awardCoins} coins for inviting ${userId}.`);
-                    try { await ctx.telegram.sendMessage(inviterId, MESSAGES.INVITER_AWARD_NOTIFICATION(ctx.from.first_name, awardCoins)); }
-                    catch (e) { console.warn(`Could not send message to inviter ${inviterId}: ${e.message}`); }
-                }
-            }
         }
 
-        const userData = userDoc.data();
+        // Referral logic: Award inviter only if the current user is new
+        if (isNewUser && inviterId && !isNaN(inviterId) && inviterId !== userId) {
+            console.log(`[Referral] User ${userId} was invited by ${inviterId}. User is new: ${isNewUser}`);
+            const inviterUserDoc = await getUser(inviterId);
+            if (inviterUserDoc && inviterUserDoc.exists) {
+                const inviterData = inviterUserDoc.data();
+                const inviterCoins = inviterData.coins || 0;
+                const awardCoins = 10;
+                await updateUser(inviterId, { coins: inviterCoins + awardCoins });
+                console.log(`[Referral] User ${inviterId} (coins: ${inviterCoins}) received ${awardCoins} coins for inviting ${userId}. New coin total: ${inviterCoins + awardCoins}`);
+                try {
+                    await ctx.telegram.sendMessage(inviterId, MESSAGES.INVITER_AWARD_NOTIFICATION(ctx.from.first_name || `کاربر ${userId}`, awardCoins));
+                } catch (e) {
+                    console.warn(`[Referral] Could not send message to inviter ${inviterId}: ${e.message}`);
+                }
+            } else {
+                console.warn(`[Referral] Inviter ${inviterId} not found in database.`);
+            }
+        } else if (inviterId && !isNaN(inviterId) && inviterId !== userId) {
+            console.log(`[Referral] User ${userId} was invited by ${inviterId}, but user is NOT new. No referral award.`);
+        }
+
+
+        const userData = userDoc.data(); // Ensure userDoc is valid before calling .data()
         if (!userData.gender || !userData.province || !userData.city) {
             await ctx.reply(MESSAGES.COMPLETE_INITIAL_REGISTRATION);
             return ctx.scene.enter('initialRegistrationScene');
