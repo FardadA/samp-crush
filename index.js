@@ -181,10 +181,11 @@ const showMainMenu = async (ctx, message) => {
 
 // --- Command Handlers ---
 bot.command('start', async (ctx) => {
-    console.log(`User ${ctx.from.id} (${ctx.from.first_name}) started the bot. Message Text: "${ctx.message?.text}", Raw Payload: "${ctx.startPayload}"`);
-    const rawInviterId = ctx.startPayload;
-    const inviterId = parseInt(rawInviterId, 10);
-    console.log(`[Referral Debug] Extracted rawInviterId: "${rawInviterId}", parsed inviterId: ${inviterId}`);
+    // Logging for debug purposes with different variable names
+    const debugRawPayload = ctx.startPayload;
+    const debugParsedInviterId = parseInt(debugRawPayload, 10);
+    console.log(`User ${ctx.from.id} (${ctx.from.first_name}) started the bot. Message Text: "${ctx.message?.text}", Raw Payload: "${debugRawPayload}"`);
+    console.log(`[Referral Debug] Extracted rawInviterId for debug: "${debugRawPayload}", parsed inviterId for debug: ${debugParsedInviterId}`);
 
     if (!db) {
         try { await ctx.reply(MESSAGES.ERROR_FIREBASE_CONNECTION); } catch(e) { console.error("Error replying firebase connection error:", e); }
