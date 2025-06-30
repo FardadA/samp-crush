@@ -181,11 +181,24 @@ const showMainMenu = async (ctx, message) => {
 
 // --- Command Handlers ---
 bot.command('start', async (ctx) => {
-    // Logging for debug purposes with different variable names
-    const debugRawPayload = ctx.startPayload;
-    const debugParsedInviterId = parseInt(debugRawPayload, 10);
-    console.log(`User ${ctx.from.id} (${ctx.from.first_name}) started the bot. Message Text: "${ctx.message?.text}", Raw Payload: "${debugRawPayload}"`);
-    console.log(`[Referral Debug] Extracted rawInviterId for debug: "${debugRawPayload}", parsed inviterId for debug: ${debugParsedInviterId}`);
+    // Logging for debug purposes
+    console.log(`User ${ctx.from.id} (${ctx.from.first_name}) started the bot. Initial Message Text: "${ctx.message?.text}", Initial ctx.startPayload: "${ctx.startPayload}"`);
+
+    let rawInviterId = ctx.startPayload; // Prioritize what Telegraf provides
+
+    // Fallback: If startPayload is empty, try to extract from message.text
+    // This is because sometimes, especially after the raw text logger, ctx.startPayload might be lost
+    // or if the command was manually typed as /start <payload> by user.
+    if (!rawInviterId && ctx.message && ctx.message.text) {
+        const match = ctx.message.text.match(/^\/start (\S+)/);
+        if (match && match[1]) {
+            rawInviterId = match[1];
+            console.log(`[Referral Debug] Manually extracted start parameter from text: "${rawInviterId}"`);
+        }
+    }
+
+    const inviterId = parseInt(rawInviterId, 10);
+    console.log(`[Referral Debug] Using rawInviterId: "${rawInviterId}", parsed inviterId: ${inviterId}`);
 
     if (!db) {
         try { await ctx.reply(MESSAGES.ERROR_FIREBASE_CONNECTION); } catch(e) { console.error("Error replying firebase connection error:", e); }
